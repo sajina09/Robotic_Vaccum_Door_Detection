@@ -1,0 +1,15 @@
+# macOS / editor
+.DS_Store
+.vscode/
+
+# Web (React)
+web/node_modules/
+web/build/
+web/dist/
+web/.env*
+npm-debug.log*
+
+# Python (files)
+files/__pycache__/
+files/.venv/
+files/*.log

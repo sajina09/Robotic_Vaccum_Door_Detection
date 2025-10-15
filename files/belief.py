@@ -1,64 +1,48 @@
-import json
-import pickle
-import numpy as np
+import pandas as pd
 import os
 
-class SensorFusion:
-    def __init__(self, cpt_dir="CPTs"):
-        # Load CPTs (from DataCollectionMN and CPT.py)
-        with open(os.path.join(cpt_dir, "sensor_fusion_model.pkl"), "rb") as f:
-            self.model = pickle.load(f)
+# ----------------------------
+# LOAD CPT FOR IR7 ONLY
+# ----------------------------
+def load_CPTs(cpt_folder="CPTs"):
+    cpt_file = os.path.join(cpt_folder, "CPT_IR7_vs_label.csv")
+    if not os.path.exists(cpt_file):
+        raise FileNotFoundError(f"{cpt_file} not found.")
+    CPTs = {"IR7": pd.read_csv(cpt_file, index_col=0)}
+    return CPTs
 
-        with open(os.path.join(cpt_dir, "ir_bin_edges.json"), "r") as f:
-            self.ir_bins = json.load(f)
+# ----------------------------
+# DISCRETIZE IR7 reading
+# ----------------------------
+def discretize_IR7(value, thresholds=(0, 50, 150, 1000)):
+    if value <= thresholds[1]:
+        return "Near"
+    elif value <= thresholds[2]:
+        return "Medium"
+    else:
+        return "Far"
 
-        # Prior (uniform belief)
-        self.prior = {
-            "Wall": 0.25,
-            "Door_Start": 0.25,
-            "Door": 0.25,
-            "Door_Passed": 0.25
-        }
+# ----------------------------
+# BELIEF FUNCTION USING ONLY IR7
+# ----------------------------
+def belief(sensor_readings, inner_configuration):
+    CPTs = inner_configuration
+    cpt_IR7 = CPTs["IR7"]
+    states = cpt_IR7.index.tolist()  # ['Wall','Door','Door_Passed']
+    probs = {state: 1.0 for state in states}
 
-    def _digitize_ir(self, ir_value, sensor_name):
-        """Discretize IR reading into bins according to training edges."""
-        bins = self.ir_bins[sensor_name]
-        return np.digitize(ir_value, bins, right=False)
+    ir7_value = sensor_readings["IR7"]
+    bin_label = discretize_IR7(ir7_value)
 
-    def belief(self, ir_dict):
-        """
-        Compute posterior belief using Bayesian update:
-        P(state | sensors) ∝ P(sensors | state) * P(state)
-        """
-        states = ["Wall", "Door_Start", "Door", "Door_Passed"]
+    for state in states:
+        try:
+            prob = cpt_IR7.loc[state, bin_label]
+        except KeyError:
+            prob = 1e-6  # avoid zero
+        probs[state] *= prob
 
-        # 1️⃣ Compute likelihood for each state
-        likelihoods = {}
-        for state in states:
-            likelihood = 1.0
-            for ir_name, ir_value in ir_dict.items():
-                binned_val = self._digitize_ir(ir_value, ir_name)
-                cpt = self.model[state][ir_name]
+    total = sum(probs.values())
+    for state in probs:
+        probs[state] /= total
 
-                # Bound index to CPT length
-                if binned_val >= len(cpt):
-                    binned_val = len(cpt) - 1
-
-                likelihood *= cpt[binned_val]
-            likelihoods[state] = likelihood
-
-        # 2️⃣ Apply Bayes rule: posterior ∝ likelihood * prior
-        unnorm_post = {
-            s: likelihoods[s] * self.prior[s] for s in states
-        }
-
-        total = sum(unnorm_post.values())
-        if total == 0:
-            posterior = self.prior
-        else:
-            posterior = {s: unnorm_post[s] / total for s in states}
-
-        # 3️⃣ Update prior for temporal smoothing
-        self.prior = posterior
-
-        return posterior
+    return probs

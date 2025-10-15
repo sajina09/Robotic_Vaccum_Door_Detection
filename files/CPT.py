@@ -5,70 +5,49 @@ import os
 # ----------------------------
 # CONFIGURATION
 # ----------------------------
-CSV_INPUT = "robot_sensor_data_labeled.csv"
-CPT_OUTPUT_DIR = "CPTs"
+CSV_INPUT = "robot_sensor_data.csv"       # Raw data collected from the robot
+CPT_OUTPUT_DIR = "CPTs"                   # Folder to save CPTs
 DISCRETIZED_CSV = "robot_sensor_data_discretized.csv"
+
 os.makedirs(CPT_OUTPUT_DIR, exist_ok=True)
 
-# Sensor columns
-IR_SENSORS = [f"IR{i+1}" for i in range(7)]
+# Only IR7 is used for Bayesian Network
+IR_SENSOR = "IR7"
 IR_BIN_LABELS = ["Near", "Medium", "Far"]
-
-# Label column
-LABEL_COLUMN = "Location"
+LABEL_COLUMN = "label"
 
 # ----------------------------
 # LOAD DATA
 # ----------------------------
 df = pd.read_csv(CSV_INPUT)
-print("✅ CSV loaded. Total rows:", len(df))
-
-# ----------------------------
-# CLEAN LABELS
-# ----------------------------
+print("CSV loaded. Total rows:", len(df))
 df[LABEL_COLUMN] = df[LABEL_COLUMN].astype(str).str.strip()
-print("✅ Unique labels:", df[LABEL_COLUMN].unique())
+print("Unique labels:", df[LABEL_COLUMN].unique())
 
 # ----------------------------
-# STEP 1: AUTOMATICALLY DEFINE IR BINS
+# STEP 1: DISCRETIZE IR7
 # ----------------------------
-ir_bins_dict = {}
-for ir in IR_SENSORS:
-    min_val = df[ir].min()
-    max_val = df[ir].max()
-    # define 3 bins spanning the range
-    bins = [min_val - 1, min_val + (max_val-min_val)/3, min_val + 2*(max_val-min_val)/3, max_val + 1]
-    ir_bins_dict[ir] = bins
-    print(f"IR sensor {ir}: bins = {bins}")
+min_val, max_val = df[IR_SENSOR].min(), df[IR_SENSOR].max()
+bins = [min_val - 0.01,
+        min_val + (max_val - min_val)/3,
+        min_val + 2*(max_val - min_val)/3,
+        max_val + 0.01]
+df[f"{IR_SENSOR}_bin"] = pd.cut(df[IR_SENSOR], bins=bins, labels=IR_BIN_LABELS, include_lowest=True)
+print(f"{IR_SENSOR} bins: {bins}")
 
 # ----------------------------
-# STEP 2: DISCRETIZE IR SENSORS
+# STEP 2: COMPUTE CPT FOR IR7
 # ----------------------------
-for ir in IR_SENSORS:
-    bins = ir_bins_dict[ir]
-    df[f"{ir}_bin"] = pd.cut(df[ir], bins=bins, labels=IR_BIN_LABELS, include_lowest=True)
-
-# Quick check
-print(df[[*IR_SENSORS, *[f"{ir}_bin" for ir in IR_SENSORS]]].head(5))
-
-# ----------------------------
-# STEP 3: COMPUTE CPTs
-# ----------------------------
-for ir in IR_SENSORS:
-    bin_col = f"{ir}_bin"
-    # Count occurrences
-    cpt_counts = df.groupby([LABEL_COLUMN, bin_col]).size().unstack(fill_value=0)
-    # Normalize per row to get probabilities
-    cpt = cpt_counts.div(cpt_counts.sum(axis=1), axis=0)
-    # Save CPT to CSV
-    cpt_file = os.path.join(CPT_OUTPUT_DIR, f"CPT_{ir}_vs_{LABEL_COLUMN}.csv")
-    cpt.to_csv(cpt_file)
-    print(f"✅ CPT saved: {cpt_file}")
-    print(cpt.head(), "\n")
+bin_col = f"{IR_SENSOR}_bin"
+cpt_counts = df.groupby([LABEL_COLUMN, bin_col]).size().unstack(fill_value=0)
+cpt = cpt_counts.div(cpt_counts.sum(axis=1), axis=0)
+cpt_file = os.path.join(CPT_OUTPUT_DIR, f"CPT_{IR_SENSOR}_vs_{LABEL_COLUMN}.csv")
+cpt.to_csv(cpt_file)
+print(f"✅ CPT saved: {cpt_file}")
+print(cpt, "\n")
 
 # ----------------------------
-# SAVE DISCRETIZED CSV
+# STEP 3: SAVE DISCRETIZED CSV
 # ----------------------------
 df.to_csv(DISCRETIZED_CSV, index=False)
-print("✅ Discretized CSV saved as:", DISCRETIZED_CSV)
-print("✅ All CPTs computed and saved in folder:", CPT_OUTPUT_DIR)
+print("Discretized CSV saved:", DISCRETIZED_CSV)
